@@ -51,8 +51,12 @@ class PClient:
         """
         return self.proxy.recvfrom(timeout)
 
-    def response(self, data: str, address: (str, int), need_re = True):
-        self.__send__(data.encode(), address)
+    def response(self, data: str, address: (str, int), need_re = True,need_en = True):
+        if need_en:
+            self.__send__(data.encode(), address)
+        else:
+            self.__send__(data, address)
+
         msg = None
         while need_re:
             if address in self.receive.keys():
@@ -73,8 +77,15 @@ class PClient:
         Start your code below!
         """
         self.file[fid] = file_path
+        file_object = open(self.file[fid], mode="rb")
+        try:
+            file_context = file_object.read()
+            file_length = len(file_context)
+        finally:
+            file_object.close()
+
         print("put in the list")
-        send_msg = "REGISTER:"+str(fid)
+        send_msg = "REGISTER:"+str(fid)+","+str(file_length)
         get_msg = self.response(send_msg,self.tracker)
 
         if get_msg == "REGISTER Success":
@@ -101,11 +112,18 @@ class PClient:
         get_msg = self.response(send_msg,self.tracker)
         peer_list = eval(get_msg[5:])
         print("get the peer list")
-        for peer in peer_list:
-            get_msg =self.response(send_msg,peer)
-            if get_msg.startswith("FILE:"):
+        length,start,offset = peer_list[0], 0,1200 #3275
+
+        part_msg = "QUERY PART:"+str(fid)+","+str(start)+","+str(offset)
+
+        for peer in peer_list[1:]:
+            get_msg =self.response(part_msg,peer)
+            print(get_msg)
+            if get_msg.startswith("PART FILE:"):
                 print("got the file")
-                data = get_msg[5:]
+                data = get_msg[12:]
+                print(data
+                      )
                 file_path = './{}/{}'.format(self.num, fid)
                 f = open(file_path, 'w')
                 f.write(data)
@@ -170,13 +188,21 @@ class PClient:
             msg, client = msg.decode(), "(\"%s\", %d)" % frm
             print(str(self.num)+" catch "+msg)
 
-            if msg.startswith("QUERY:"):
-                fid = int(msg[6:])
+            if msg.startswith("QUERY"):
+                if msg.startswith("QUERY PART:"):
+                    list =  msg[11:].split(",")
+                    print(list)
+                    fid,start,offset= int(list[0]),int(list[1]),int(list[2])
+                    re_head = "PART FILE:"
+                else:
+                    fid,start ,offset = int(msg[6:]),0,50
+                    re_head = "FILE:"
+
                 if fid in self.file.keys():
-                    file_object = open(self.file[fid])
+                    file_object = open(self.file[fid], mode="rb")
                     try:
-                        file_context = file_object.read()[:30]
-                        file = "FILE:" + file_context
+                        file_context = file_object.read()[start:start+offset]
+                        file = re_head + str(file_context)
                         print("send the file")
                         self.response(file, eval(client),False)
 
