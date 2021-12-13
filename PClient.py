@@ -1,4 +1,7 @@
 import threading
+import os
+import sys
+import signal
 
 from Proxy import Proxy
 
@@ -17,11 +20,16 @@ class PClient:
         """
         self.num = PClient.count
         PClient.count +=1
+
+        new_path = './{}'.format(self.num)
+        if not os.path.exists(new_path):
+            os.makedirs(new_path)
+
         self.file={}
         self.receive = {}
         self.catching = True
-        t = threading.Thread(target=self.start_catch,name=str(self.num))
-        t.start()
+        self.t = threading.Thread(target=self.start_catch,name=str(self.num))
+        self.t.start()
 
 
     def __send__(self, data: bytes, dst: (str, int)):
@@ -97,7 +105,11 @@ class PClient:
             get_msg =self.response(send_msg,peer)
             if get_msg.startswith("FILE:"):
                 print("got the file")
-                data = get_msg[5:].encode
+                data = get_msg[5:]
+                file_path = './{}/{}'.format(self.num, fid)
+                f = open(file_path, 'w')
+                f.write(data)
+                self.file[fid] = file_path
                 self.response("REGISTER:"+str(fid),self.tracker)
                 break
 
@@ -142,6 +154,7 @@ class PClient:
             print("Success close")
             self.catching = False
             self.proxy.close()
+            # sys.exit()
         else:
             print("no tracker")
         """
@@ -175,3 +188,5 @@ class PClient:
 
 if __name__ == '__main__':
     pass
+    # tracker_address = ("127.0.0.1", 10086)
+    # A = PClient(tracker_address)

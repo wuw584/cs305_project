@@ -42,6 +42,7 @@ class Tracker:
                 # Client can use this to REGISTER a file and record it on the tracker
                 fid = msg[9:]
                 if fid not in self.files:
+
                     self.files[fid] = []
                 self.files[fid].append(client)
                 self.response("REGISTER Success", frm)
