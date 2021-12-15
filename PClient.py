@@ -1,15 +1,14 @@
+from os import sendfile
 import threading
-import os
-import sys
-import signal
-
+import hashlib
+from time import time
+from typing import List, Tuple
 from Proxy import Proxy
-
-
+import concurrent.futures
 
 class PClient:
     count  = 1
-    def __init__(self, tracker_addr: (str, int), proxy=None, port=None, upload_rate=0, download_rate=0):
+    def __init__(self, tracker_addr: Tuple[str, int], proxy=None, port=None, upload_rate=0, download_rate=0):
         if proxy:
             self.proxy = proxy
         else:
@@ -19,20 +18,16 @@ class PClient:
         Start your additional code below!
         """
         self.num = PClient.count
-        PClient.count +=1
+        PClient.count += 1
 
-        new_path = './{}'.format(self.num)
-        if not os.path.exists(new_path):
-            os.makedirs(new_path)
-
-        self.file={}
+        self.file = {}
         self.receive = {}
-        self.catching = True
-        self.t = threading.Thread(target=self.start_catch,name=str(self.num))
-        self.t.start()
+        self.datapool = {}
+        t = threading.Thread(target=self.start_catch, daemon=True)
+        t.start()
 
 
-    def __send__(self, data: bytes, dst: (str, int)):
+    def __send__(self, data: bytes, dst: Tuple[str, int]):
         """
         Do not modify this function!!!
         You must send all your packet by this function!!!
@@ -41,7 +36,7 @@ class PClient:
         """
         self.proxy.sendto(data, dst)
 
-    def __recv__(self, timeout=None) -> (bytes, (str, int)):
+    def __recv__(self, timeout=None) -> Tuple[bytes, Tuple[str, int]]:
         """
         Do not modify this function!!!
         You must receive all data from this function!!!
@@ -51,11 +46,9 @@ class PClient:
         """
         return self.proxy.recvfrom(timeout)
 
-    def response(self, data: str, address: (str, int), need_re = True,need_en = True):
-        if need_en:
-            self.__send__(data.encode(), address)
-        else:
-            self.__send__(data, address)
+    def response(self, data: bytes, address: Tuple[str, int], need_re = True) -> bytes:
+        
+        self.__send__(data, address)
 
         msg = None
         while need_re:
@@ -66,150 +59,130 @@ class PClient:
         return msg
 
     def register(self, file_path: str):
-        """
-        Share a file in P2P network
-        :param file_path: The path to be shared, such as "./alice.txt"
-        :return: fid, which is a unique identification of the shared file and can be used by other PClients to
-                 download this file, such as a hash code of it
-        """
-        fid = 1
-        """
-        Start your code below!
-        """
-        self.file[fid] = file_path
-        file_object = open(self.file[fid], mode="rb")
-        try:
-            file_context = file_object.read()
-            file_length = len(file_context)
-        finally:
-            file_object.close()
 
-        print("put in the list")
-        send_msg = "REGISTER:"+str(fid)+","+str(file_length)
-        get_msg = self.response(send_msg,self.tracker)
+        with open(file_path, mode="rb") as file_object:
+            file_data = file_object.read()
+            fid = hashlib.sha256(file_data).hexdigest()
+            file_length = len(file_data)
+            self.file[fid] = file_data
+            print(f'{self.num} register {file_path} with fid: {fid}')
+            send_msg = b"REGISTER\r\n" + fid.encode('utf-8') + b'\r\n' + file_length.to_bytes((file_length.bit_length() + 7) // 8, 'big')
 
-        if get_msg == "REGISTER Success":
-            print("Success register")
+        get_msg = self.response(send_msg, self.tracker)
+
+        if get_msg == b"REGISTER SUCCESS":
+            print(f'{self.num} register {file_path} success')
         else:
             print("no tracker")
 
-        """
-        End of your code
-        """
         return fid
 
-    def download(self, fid) -> bytes:
+    def __download_seg(self, fid: str, peer: Tuple[str, int], i: int, seg_count: int, seg_size: int, last_seg: int ,data_segs: List[bytes]) -> bytes:
+        print(f'{self.num} download {i} from {peer}')
+
+        start = i * seg_size
+        if i == seg_count - 1:
+            offset = last_seg
+        elif i < seg_count - 1:
+            offset = seg_size
+        else:
+            return
+        
+        msg = b'QUERY\r\n' + fid.encode('utf-8') + b'\r\n'
+        msg += start.to_bytes((start.bit_length() + 7) // 8, 'big') + b'\r\n'
+        msg += offset.to_bytes((offset.bit_length() + 7) // 8, 'big') + b'\r\n'
+        msg += i.to_bytes((i.bit_length() + 7) // 8, 'big')
+        # data_segs[i] = self.response(msg, peer)
+        self.__send__(msg, peer)
+        return
+
+    def download(self, fid: str) -> bytes:
         """
         Download a file from P2P network using its unique identification
         :param fid: the unique identification of the expected file, should be the same type of the return value of share()
         :return: the whole received file in bytes
         """
-        data = None
+        data = b''
+        seg_size = 4000
         """
         Start your code below!
         """
-        send_msg = "QUERY:"+str(fid)
-        get_msg = self.response(send_msg,self.tracker)
-        peer_list = eval(get_msg[5:])
-        print("get the peer list")
-        length,start,offset = peer_list[0], 0,1200 #3275
+        send_msg = b"QUERY\r\n" + fid.encode('utf-8')
+        print(f'{self.num} wants to download {fid}')
+        get_msg = self.response(send_msg, self.tracker)
+        length = int(eval(get_msg)[0])
+        seg_count = length // seg_size
+        last_seg = length % seg_size
+        if last_seg != 0:
+            seg_count += 1
+        data_segs = [None] * seg_count
+        self.datapool[fid] = [None] * seg_count
+        i = 0
+        while None in self.datapool[fid]:       
+            get_msg = self.response(send_msg, self.tracker)
+            peer_list = eval(get_msg)[1:]
+            first_peer = peer_list[0]
+            self.__download_seg(fid, first_peer, i, seg_count, seg_size, last_seg, data_segs)
+            i += 1
+        
+        for d in self.datapool[fid]:
+            data += d
+        
+        self.file[fid] = data
 
-        part_msg = "QUERY PART:"+str(fid)+","+str(start)+","+str(offset)
-
-        for peer in peer_list[1:]:
-            get_msg =self.response(part_msg,peer)
-            print(get_msg)
-            if get_msg.startswith("PART FILE:"):
-                print("got the file")
-                data = get_msg[12:]
-                print(data
-                      )
-                file_path = './{}/{}'.format(self.num, fid)
-                f = open(file_path, 'w')
-                f.write(data)
-                self.file[fid] = file_path
-                self.response("REGISTER:"+str(fid),self.tracker)
-                break
-
-        # self.response(msg,self.tracker)
-        # msg,frm = self.__recv__()
-        # msg, client = msg.decode(), "(\"%s\", %d)" % frm
-
-        """
-        End of your code
-        """
+        self.response(f'REGISTER\r\n{fid}\r\n{length}'.encode('utf-8'), self.tracker)
+    
         return data
 
-    def cancel(self, fid):
-        """
-        Stop sharing a specific file, others should be unable to get this file from this client any more
-        :param fid: the unique identification of the file to be canceled register on the Tracker
-        :return: You can design as your need
-        """
-        send_msg = "CANCEL:"+str(fid)
-        get_msg = self.response(send_msg,self.tracker)
 
-        if get_msg == "CANCEL Success":
-            print("Success cancel")
+    def cancel(self, fid: str):
+        send_msg = b"CANCEL\r\n" + fid.encode('utf-8')
+        get_msg = self.response(send_msg, self.tracker)
+
+        if get_msg == b"CANCEL SUCCESS":
+            print(f"{self.num} cancel {fid} success")
         else:
             print("no tracker")
-
-
-        """
-        End of your code
-        """
 
     def close(self):
-        """
-        Completely stop the client, this client will be unable to share or download files any more
-        :return: You can design as your need
-        """
-        send_msg = "CLOSE"
-        get_msg = self.response(send_msg,self.tracker)
-        print("here")
+        send_msg = b"CLOSE"
+        get_msg = self.response(send_msg, self.tracker)
+        print(f'{self.num} wants to close')
 
-        if get_msg == "CLOSE Success":
-            print("Success close")
-            self.catching = False
+        if get_msg == b"CLOSE SUCCESS":
+            print(f"{self.num} close success")
             self.proxy.close()
-            # sys.exit()
         else:
             print("no tracker")
-        """
-        End of your code
-        """
 
 
     def start_catch(self):
-        while self.catching:
-            print(str(self.num))
+        while True:
+            # print(str(self.num))
 
             msg, frm = self.__recv__()
-            msg, client = msg.decode(), "(\"%s\", %d)" % frm
-            print(str(self.num)+" catch "+msg)
+            # print(f'{self.num} catch {msg}')
+            msg_list = msg.split(b'\r\n')
 
-            if msg.startswith("QUERY"):
-                if msg.startswith("QUERY PART:"):
-                    list =  msg[11:].split(",")
-                    print(list)
-                    fid,start,offset= int(list[0]),int(list[1]),int(list[2])
-                    re_head = "PART FILE:"
-                else:
-                    fid,start ,offset = int(msg[6:]),0,50
-                    re_head = "FILE:"
+            if msg_list[0] == b'QUERY':
+                fid = msg_list[1].decode('utf-8')
+                start = int.from_bytes(msg_list[2], 'big')
+                offset = int.from_bytes(msg_list[3], 'big')
+                index = msg_list[4]
+                self.__send__(b'RETURN\r\n'+ msg_list[1] + b'\r\n' +index+b'\r\n'+self.file[fid][start:start+offset], frm)
+                # self.__send__(self.file[fid][start:start+offset], frm)
 
-                if fid in self.file.keys():
-                    file_object = open(self.file[fid], mode="rb")
-                    try:
-                        file_context = file_object.read()[start:start+offset]
-                        file = re_head + str(file_context)
-                        print("send the file")
-                        self.response(file, eval(client),False)
+            elif msg_list[0] == b'RETURN':
+                fid = msg_list[1].decode('utf-8')
+                index = int.from_bytes(msg_list[2], 'big')
+                data = msg.split(b'\r\n', 3)[3]
+                self.datapool[fid][index] = data
 
-                    finally:
-                        file_object.close()
+            elif msg == b'CLOSE SUCCESS':
+                self.receive[frm] = msg
+                return
             else:
-                self.receive[eval(client)] = msg
+                self.receive[frm] = msg
 
 
 if __name__ == '__main__':

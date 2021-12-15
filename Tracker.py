@@ -1,12 +1,13 @@
+from typing import Tuple
 from Proxy import Proxy
-
+import hashlib
 
 class Tracker:
     def __init__(self, upload_rate=10000, download_rate=10000, port=None):
         self.proxy = Proxy(upload_rate, download_rate, port)
         self.files = {}
 
-    def __send__(self, data: bytes, dst: (str, int)):
+    def __send__(self, data: bytes, dst: Tuple[str, int]):
         """
         Do not modify this function!!!
         You must send all your packet by this function!!!
@@ -15,7 +16,7 @@ class Tracker:
         """
         self.proxy.sendto(data, dst)
 
-    def __recv__(self, timeout=None) -> (bytes, (str, int)):
+    def __recv__(self, timeout=None) -> Tuple[bytes, Tuple[str, int]]:
         """
         Do not modify this function!!!
         You must receive all data from this function!!!
@@ -25,9 +26,6 @@ class Tracker:
         """
         return self.proxy.recvfrom(timeout)
 
-    def response(self, data: str, address: (str, int)):
-        self.__send__(data.encode(), address)
-
     def start(self):
         """
         Start the Tracker and it will work forever
@@ -35,42 +33,41 @@ class Tracker:
         """
         while True:
             msg, frm = self.__recv__()
-            msg, client = msg.decode(), "(\"%s\", %d)" % frm
-            print(msg)
-
-            if msg.startswith("REGISTER:"):
+            msg_list = msg.split(b'\r\n')
+            
+            if msg_list[0] == b'REGISTER':
                 # Client can use this to REGISTER a file and record it on the tracker
-                fid = msg[9:]
+                fid = msg_list[1]
+                flength = int.from_bytes(msg_list[2], 'big')
                 if fid not in self.files:
+                    self.files[fid] = [flength]
+                self.files[fid].append(frm)
+                print(f'after register: {self.files}')
+                # print(self.files)
+                self.__send__(b'REGISTER SUCCESS', frm)
+                # self.response("REGISTER Success", frm)
 
-                    self.files[fid] = []
-                self.files[fid].append(client)
-                self.response("REGISTER Success", frm)
+            elif msg_list[0] == b'QUERY':
+                fid = msg_list[1]
+                response_msg = f'{self.files[fid]}'
+                # print(response_msg)
+                self.__send__(response_msg.encode('utf-8'), frm)
 
-            elif msg.startswith("QUERY:"):
-                # Client can use this to check who has the specific file with the given fid
-                fid = msg[6:]
-                result = []
-                for c in self.files[fid]:
-                    result.append(c)
-                self.response("LIST:"+"[%s]" % (", ".join(result)), frm)
-
-            elif msg.startswith("CANCEL:"):
+            elif msg_list[0] == b'CANCEL':
                 # Client can use this file to cancel the share of a file
-                fid = msg[7:]
-                if client in self.files[fid]:
-                    self.files[fid].remove(client)
-                self.response("CANCEL Success", frm)
+                fid = msg_list[1]
+                if frm in self.files[fid]:
+                    self.files[fid].remove(frm)
+                    print(f'after cancel: {self.files}')
+                    # print(self.files)
+                self.__send__(b"CANCEL SUCCESS", frm)
 
-            elif msg.startswith("CLOSE"):
-                # Client can use this file to cancel the share of a file
+            elif msg_list[0] == b'CLOSE':
                 for i in self.files.keys():
-
-                    if client in self.files[i]:
-                        self.files[i].remove(client)
-                print("send")
-
-                self.response("CLOSE Success", frm)
+                    if frm in self.files[i]:
+                        self.files[i].remove(frm)
+                print(f'after close: {self.files}')
+                self.__send__(b"CLOSE SUCCESS", frm)
 
 
 
