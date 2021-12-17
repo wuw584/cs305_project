@@ -3,12 +3,24 @@ import hashlib
 import time
 from typing import List, Tuple
 from Proxy import Proxy
+from dataclasses import dataclass
 import concurrent.futures
 
 def debug(data):
     for i in range(len(data)):
         if data[i] is None:
             print(i)
+
+def get_count(count: int, size: int) -> int:
+    a = count // size
+    if count % size != 0:
+        a += 1
+    return a
+
+@dataclass
+class State:
+    cancel_list: List[int]
+    done_list: List[int]
 
 class PClient:
     count  = 1
@@ -30,10 +42,11 @@ class PClient:
         self.avalible = {}
         self.state = {}
         self.packet_size = 1024
+        self.window_size = 10  # 10 packets
         threading.Thread(target=self.start_catch, daemon=True).start()
         threading.Thread(target=self.start_catch, daemon=True).start()
-        # threading.Thread(target=self.start_catch, daemon=True).start()
-        # threading.Thread(target=self.start_catch, daemon=True).start()
+        threading.Thread(target=self.start_catch, daemon=True).start()
+        threading.Thread(target=self.start_catch, daemon=True).start()
         
 
 
@@ -59,6 +72,7 @@ class PClient:
     def response(self, data: bytes, address: Tuple[str, int], need_re = True) -> bytes:
         
         self.__send__(data, address)
+        print(self.proxy.send_queue.qsize())
 
         msg = None
         while need_re:
@@ -101,13 +115,14 @@ class PClient:
         self.avalible[fid] = True
         return fid
 
-    def __download(self, fid: str, peer: Tuple[str, int], start: int, end: int, i: int):
+    def __download(self, fid: str, peer: Tuple[str, int], i: int):
+        """
+        download the ith window of file
+        """
         msg = b'QUERY\r\n' + fid.encode('utf-8') + b'\r\n'
-        msg += str(start).encode('utf-8') + b'\r\n'
-        msg += str(end).encode('utf-8') + b'\r\n'
         msg += str(i).encode('utf-8')
         self.__send__(msg, peer)
-        print(f'{self.num} download {fid} from {start} to {end} from {peer}')
+        # print(f'{self.num} download {i}th window of {fid} from {peer}')
 
     def download(self, fid: str) -> bytes:
         """
@@ -117,46 +132,38 @@ class PClient:
         """
         data = b''
         seg_size = 1024
-        """
-        Start your code below!
-        """
+        win_size = 10
+
         send_msg = b"QUERY\r\n" + fid.encode('utf-8')
-        print(f'{self.num} wants to download {fid} from to')
         get_msg = self.response(send_msg, self.tracker)
+        print(f'{self.num} gets peerlist of {fid}')
+
         length = int(eval(get_msg)[0])
+        seg_count = get_count(length, seg_size)
+        win_count = get_count(seg_count, win_size)
         peer_list = eval(get_msg)[1:]
         first_peer = peer_list[0]
-        seg_count = length // seg_size
-        if length % seg_size != 0:
-            seg_count += 1
         self.datapool[fid] = [None] * seg_count
-        self.state[fid] = [None] * 11
+        self.state[fid] = State([], [])
 
-        start, end = 0, seg_count//10
-        for i in range(11):
-            self.state[fid][i] = 'downloading'
-            if end > seg_count:
-                end = seg_count
-            self.__download(fid, first_peer, start, end, i)
 
-            while self.state[fid][i] != 'done':
-                time.sleep(0.5)
-                if self.state[fid][i] == 'cancel':
-                    self.state[fid][i] = 'downloading'
-                    temp = start
-                    for d in self.datapool[fid][temp:]:
-                        if d is not None:
-                            start += 1
-                    get_msg = self.response(send_msg, self.tracker)
-                    peer_list = eval(get_msg)[1:]
-                    first_peer = peer_list[0]
-                    self.__download(fid, first_peer, start, end, i)
-            
-            start = end
-            end += seg_count//10
+
+        for i in range(win_count):
+            self.__download(fid, first_peer, i)
+
+        while len(self.state[fid].done_list) < win_count:
+            time.sleep(0.5)
+            if len(self.state[fid].cancel_list) > 0:
+                get_msg = self.response(send_msg, self.tracker)
+                peer_list = eval(get_msg)[1:]
+                first_peer = peer_list[0]
+                for i in self.state[fid].cancel_list:
+                    self.__download(fid, first_peer, i)
         
+        print('start')
         for d in self.datapool[fid]:
             data += d
+        print('end')
         
         self.file[fid] = data
 
@@ -166,6 +173,7 @@ class PClient:
 
 
     def cancel(self, fid: str):
+        print('start cancel')
         send_msg = b"CANCEL\r\n" + fid.encode('utf-8')
         get_msg = self.response(send_msg, self.tracker)
 
@@ -198,25 +206,27 @@ class PClient:
 
             if msg_list[0] == b'QUERY':
                 fid = msg_list[1].decode('utf-8')
-                start = int(msg_list[2].decode('utf-8'))
-                end = int(msg_list[3].decode('utf-8'))
-                fi = msg_list[4]
+                win = int(msg_list[2].decode('utf-8'))
+                start = win * self.window_size
+                end = start + self.window_size
                 flag = True
                 for i in range(start, end):
                     if not self.avalible[fid]:
-                        print(f'{self.num} canceled {fid}')
-                        cancel_msg = b'CANCELED\r\n' + msg_list[1] + b'\r\n' + fi
+                        print(f'{self.num} canceled {fid} in {win}th window')
+                        cancel_msg = b'CANCELED\r\n' + msg_list[1] + b'\r\n' + str(win).encode('utf-8')
                         self.__send__(cancel_msg, frm)
                         flag = False
                         break
 
                     head = b'RETURN\r\n' + msg_list[1] + b'\r\n' + str(i).encode('utf-8') + b'\r\n'
                     self.__send__(head + self.file[fid][i*self.packet_size:(i+1)*self.packet_size], frm)
-                    # print(f'{self.num} sends {i}')
+                    # if i % 100 == 0:
+                        # print(f'{self.num} sends {i}')
                 if flag:
-                    print(f'{self.num} sends {frm} from {start} to {end}')
-                    done_msg = b'DONE\r\n' + msg_list[1] + b'\r\n' + fi
+                    # print(f'{self.num} sends {frm} from {start} to {end}')
+                    done_msg = b'DONE\r\n' + msg_list[1] + b'\r\n' + str(win).encode('utf-8')
                     self.__send__(done_msg, frm)
+                
                     
             elif msg_list[0] == b'RETURN':
                 fid = msg_list[1].decode('utf-8')
@@ -229,13 +239,17 @@ class PClient:
             
             elif msg_list[0] == b'CANCELED':
                 fid = msg_list[1].decode('utf-8')
-                fi = int(msg_list[2].decode('utf-8'))
-                self.state[fid][fi] = 'cancel'
+                win = int(msg_list[2].decode('utf-8'))
+                self.state[fid].cancel_list.append(win)
+                self.__send__(b'CANCEL COPY', frm)
             
             elif msg_list[0] == b'DONE':
                 fid = msg_list[1].decode('utf-8')
-                fi = int(msg_list[2].decode('utf-8'))
-                self.state[fid][fi] = 'done'
+                win = int(msg_list[2].decode('utf-8'))
+                print(f'{win} is done')
+                if win not in self.state[fid].done_list:
+                    self.state[fid].done_list.append(win)
+                self.__send__(b'DONE COPY', frm)
 
             elif msg == b'CLOSE SUCCESS':
                 self.receive[frm] = msg
