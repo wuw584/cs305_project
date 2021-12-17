@@ -38,7 +38,7 @@ class Tracker:
             if msg_list[0] == b'REGISTER':
                 # Client can use this to REGISTER a file and record it on the tracker
                 fid = msg_list[1]
-                flength = int.from_bytes(msg_list[2], 'big')
+                flength = int(msg_list[2].decode('utf-8'))
                 if fid not in self.files:
                     self.files[fid] = [flength]
                 self.files[fid].append(frm)
