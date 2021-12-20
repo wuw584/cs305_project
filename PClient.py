@@ -4,6 +4,7 @@ import time
 from typing import List, Tuple
 from Proxy import Proxy
 from dataclasses import dataclass
+import random
 
 def debug(data):
     for i in range(len(data)):
@@ -40,8 +41,8 @@ class PClient:
         self.datapool = {}
         self.avalible = {}
         self.state = {}
-        self.packet_size = 2048
-        self.window_size = 16  # 10 packets
+        self.packet_size = 1024 * 4
+        self.window_size = 8
         self.activate = True
         self.threads = []
         for _ in range(4):
@@ -91,7 +92,8 @@ class PClient:
             file_length = len(file_data)
             self.file[fid] = file_data
             print(f'{self.num} register {file_path} with fid: {fid}')
-            send_msg = b"REGISTER\r\n" + fid.encode('utf-8') + b'\r\n' + str(file_length).encode('utf-8')
+            send_msg = b"REGISTER\r\n" + fid.encode('utf-8') + b'\r\n' + str(file_length).encode('utf-8') + b'\r\n'
+            send_msg += str(self.proxy.upload_rate).encode('utf-8')
 
         get_msg = self.response(send_msg, self.tracker)
 
@@ -115,26 +117,76 @@ class PClient:
 
         self.avalible[fid] = True
         return fid
+    
+    def __register_win(self, fid: str, win: int):
+        msg = b'REGISTER WIN\r\n' + fid.encode('utf-8') + b'\r\n' + str(win).encode('utf-8') + b'\r\n'
+        msg += str(self.proxy.upload_rate).encode('utf-8')
 
-    def __download(self, fid: str, peer: Tuple[str, int], i: int):
+        get_msg = self.response(msg, self.tracker)
+
+        if get_msg == b"REGISTER SUCCESS":
+            pass
+            # print(f'{self.num} register {fid}\'s {win}th window success')
+        else:
+            print("no tracker")
+
+        self.avalible[fid] = True
+        return
+
+    def __download_seg(self, fid: str, peer: Tuple[str, int], i: int, flag: List[int]):
         """
-        download the ith window of fid from peer
+        download the ith seg from peer
+        when the function returns, the seg is already downloaded
+        """
+        if i >= len(self.datapool[fid]):
+            return
+
+        msg = b'QUERY\r\n' + fid.encode('utf-8') + b'\r\n'
+        msg += str(i).encode('utf-8')
+
+        self.__send__(msg, peer)
+        count = 0
+        while self.datapool[fid][i] is None:
+            count += 1
+            time.sleep(0.1)
+            if count >= 20:
+                flag.append(1)
+                break
+
+
+    def __download(self, fid: str, peer_list: List[Tuple[int,Tuple[str, int]]], i: int):
+        """
+        download the ith window of fid from peer_list
         when the function returns, the windows is already downloaded
         """
         count = 0
-        msg = b'QUERY\r\n' + fid.encode('utf-8') + b'\r\n'
-        msg += str(i).encode('utf-8')
-        self.__send__(msg, peer)
-        while i not in self.state[fid].done_list:
-            count += 1
-            time.sleep(0.1)
-            if i in self.state[fid].cancel_list:
-                return
-            if count >= 10:
-                self.state[fid].cancel_list.append(i)
-                return
 
-        # print(f'{self.num} download {i}th window of {fid} from {peer}')
+        start_seg = i * self.window_size
+        end_seg = start_seg + self.window_size
+        threads = []
+        flag = []
+        # print(f'{self.num} get {i}th win from {peer_list}')
+        for r, p in peer_list:
+            for t in range(r):
+                if start_seg < end_seg:
+                    threads.append(threading.Thread(target=self.__download_seg, args=(fid, p, start_seg, flag)))
+                    start_seg += 1
+
+        if threads:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        if len(flag) >= 1:
+            raise TimeoutError
+        threads.clear()
+        
+
+
+        self.__register_win(fid, i)
+
+        print(f'{self.num} download {i}th window of {fid} from {peer_list}')
         return
 
     def download(self, fid: str) -> bytes:
@@ -147,39 +199,27 @@ class PClient:
         seg_size = self.packet_size
         win_size = self.window_size
 
-        send_msg = b"QUERY\r\n" + fid.encode('utf-8')
+        send_msg = b"QUERYLENGTH\r\n" + fid.encode('utf-8')
         get_msg = self.response(send_msg, self.tracker)
-        print(f'{self.num} gets peerlist of {fid}')
+        length = int(get_msg.decode('utf-8'))
 
-        length = int(eval(get_msg)[0])
         seg_count = get_count(length, seg_size)
         win_count = get_count(seg_count, win_size)
         waiting_list = [_ for _ in reversed(range(win_count))]
-        peer_list = eval(get_msg)[1:]
+        random.shuffle(waiting_list)
         self.datapool[fid] = [None] * seg_count
         self.state[fid] = State([], [])
+
         while waiting_list:
             flag = True
-            threads = []
-            
-            for p in peer_list:
-                if waiting_list:
-                    threads.append(threading.Thread(target=self.__download, args=(fid, p, waiting_list.pop())))
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
-            
-            while self.state[fid].cancel_list:
-                waiting_list.append(self.state[fid].cancel_list.pop())
-                flag = False
-            if not flag:
-                get_msg = self.response(send_msg, self.tracker)
-                peer_list = eval(get_msg)[1:]
-              
-
-            threads.clear()
-
+            win = waiting_list.pop()
+            query_msg = b'QUERY\r\n'+fid.encode('utf-8')+b'\r\n'+str(win).encode('utf-8')
+            peer_list = eval(self.response(query_msg, self.tracker).decode('utf-8'))
+            try:
+                self.__download(fid, peer_list, win)
+            except TimeoutError:
+                print(f'{self.num} fails to download {win} due to time out')
+                waiting_list.append(win)
 
         print('start')
         i = 0
@@ -191,8 +231,9 @@ class PClient:
         print('end')
         
         self.file[fid] = data
+        self.avalible[fid] = True
 
-        self.__register(fid, length)
+        # self.__register(fid, length)
     
         return data
 
@@ -218,8 +259,9 @@ class PClient:
             self.activate = False
             for fid in self.avalible.keys():
                 self.avalible[fid] = False
+            # for t in self.threads:
+            #     t.join()
             self.proxy.close()
-            self.threads.clear()
             print(f"{self.num} close success")
         else:
             print("no tracker")
@@ -233,21 +275,16 @@ class PClient:
 
             if msg_list[0] == b'QUERY':
                 fid = msg_list[1].decode('utf-8')
-                win = int(msg_list[2].decode('utf-8'))
-                start = win * self.window_size
-                end = start + self.window_size
-                if not self.avalible[fid]:
-                    print(f'{self.num} canceled {fid}')
-                    cancel_msg = b'CANCELED\r\n' + msg_list[1] + b'\r\n' + str(win).encode('utf-8')
-                    self.__send__(cancel_msg, frm)
 
-                else:
-                    for i in range(start, end):
-                        head = b'RETURN\r\n' + msg_list[1] + b'\r\n' + str(i).encode('utf-8') + b'\r\n'
-                        self.__send__(head + self.file[fid][i*self.packet_size:(i+1)*self.packet_size], frm)
-
-                    done_msg = b'DONE\r\n' + msg_list[1] + b'\r\n' + str(win).encode('utf-8')
-                    self.__send__(done_msg, frm)
+                if self.avalible[fid]:
+                    seg = int(msg_list[2].decode('utf-8'))
+                    start = seg * self.packet_size
+                    end = start + self.packet_size
+                    head = b'RETURN\r\n' + msg_list[1] + b'\r\n' + str(seg).encode('utf-8') + b'\r\n'
+                    if fid in self.file.keys():
+                        self.__send__(head + self.file[fid][start: end], frm)
+                    else:
+                        self.__send__(head + self.datapool[fid][seg], frm)  
                 
                     
             elif msg_list[0] == b'RETURN':
@@ -257,7 +294,8 @@ class PClient:
                 if index < len(self.datapool[fid]):
                     self.datapool[fid][index] = data
                     # if index % 100 == 0:
-                    print(f'{self.num} reveives {index} from {frm}')
+                # if self.num == 2:
+                # print(f'{self.num} reveives {index} from {frm}')
             
             elif msg_list[0] == b'CANCELED':
                 fid = msg_list[1].decode('utf-8')
@@ -267,7 +305,7 @@ class PClient:
             elif msg_list[0] == b'DONE':
                 fid = msg_list[1].decode('utf-8')
                 win = int(msg_list[2].decode('utf-8'))
-                # print(f'{self.num}\'s {win} is done')
+                print(f'{self.num}\'s {win} is done')
                 if win not in self.state[fid].done_list:
                     self.state[fid].done_list.append(win)
 
