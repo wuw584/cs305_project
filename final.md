@@ -1,3 +1,5 @@
+Pclient registers a file
+
 ```
             REGISTER
             Fid
@@ -8,6 +10,8 @@ Pclient                   Tracker
                 <=
          REGISTER SUCCESS
 ```
+
+Pclient registers a window in file
 
 ```
          REGISTER WIN
@@ -20,6 +24,8 @@ Pclient                Tracker
        REGISTER SUCCESS
 ```
 
+Pclient wants to download a window in file
+
 ```
             QUERY
             Fid
@@ -30,6 +36,8 @@ Pclient                Tracker
           Peer List
 ```
 
+Pclient queries the length of file
+
 ```
         QUERYLENGTH
         Fid
@@ -38,6 +46,8 @@ Pclient                Tracker
              <=
          File Length
 ```
+
+Pclient cancels a file
 
 ```
             CANCEL
@@ -48,6 +58,8 @@ Pclient                Tracker
         CANCEL SUCCESS
 ```
 
+Pclient closes
+
 ```
             CLOSE
              =>
@@ -56,4 +68,6 @@ Pclient                Tracker
         CLOSE SUCCESS
 ```
 
-
+```
+Pclient
+```
