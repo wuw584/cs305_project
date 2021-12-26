@@ -1,4 +1,4 @@
-Pclient registers a file
+**Pclient registers a file**
 
 ```
             REGISTER
@@ -11,7 +11,7 @@ Pclient                   Tracker
          REGISTER SUCCESS
 ```
 
-Pclient registers a window in file
+**Pclient registers a window in file**
 
 ```
          REGISTER WIN
@@ -24,7 +24,7 @@ Pclient                Tracker
        REGISTER SUCCESS
 ```
 
-Pclient wants to download a window in file
+**Pclient wants to download a window in file**
 
 ```
             QUERY
@@ -36,7 +36,7 @@ Pclient                Tracker
           Peer List
 ```
 
-Pclient queries the length of file
+**Pclient queries the length of file**
 
 ```
         QUERYLENGTH
@@ -47,7 +47,7 @@ Pclient                Tracker
          File Length
 ```
 
-Pclient cancels a file
+**Pclient cancels a file**
 
 ```
             CANCEL
@@ -58,7 +58,7 @@ Pclient                Tracker
         CANCEL SUCCESS
 ```
 
-Pclient closes
+**Pclient closes**
 
 ```
             CLOSE
@@ -68,7 +68,18 @@ Pclient                Tracker
         CLOSE SUCCESS
 ```
 
+**Pclient downloads a seg in file from another Pclient**
+
+```
+           QUERY
+           Fid
+           seg
+             =>
+Pclient                Pclient
+             <=
+           RETURN
+           seg
+           seg's data
 ```
 
-Pclient
-```
+
