@@ -1,0 +1,23 @@
+1 register ./alice.txt with fid: 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe
+1 register ./alice.txt success
+2 download 2th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 53559)]]
+2 download 4th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 53559)]]
+2 download 0th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 53559)]]
+2 download 3th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 53559)]]
+2 download 1th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 53559)]]
+start
+end
+1 wants to close
+1 close success
+3 download 1th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 52646)]]
+3 download 3th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 52646)]]
+3 download 2th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 52646)]]
+3 download 4th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 52646)]]
+3 download 0th window of 6b27fbbcc57f830f429ff7fc8b64341d77eb28b94911063c9b2eeeeccb83ccfe from [[8, ('127.0.0.1', 52646)]]
+start
+end
+Success!
+2 wants to close
+2 close success
+3 wants to close
+3 close success
